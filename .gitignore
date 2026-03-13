@@ -1,0 +1,20 @@
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Local database
+submissions.db
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS files
+.DS_Store
+
+# Version backups
+app_v1.py
+app_v2.py
+
+# Excel exports
+*.xlsx
