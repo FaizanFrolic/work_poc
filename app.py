@@ -259,6 +259,110 @@ def log_action(record_id, action, old_values=None, new_values=None):
     except Exception as e:
         st.error(f"Logging error: {e}")
 
+# --- User Management Logic ---
+def delete_user(username):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"DELETE FROM {USER_TABLE} WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+def update_user_role(username, new_role):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"UPDATE {USER_TABLE} SET role = ? WHERE username = ?", (new_role, username))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+def reset_user_password(username, new_password):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        c.execute(f"UPDATE {USER_TABLE} SET password_hash = ? WHERE username = ?", (hashed, username))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+# --- Dialogs ---
+@st.dialog("🔑 Reset User Password")
+def reset_password_dialog(username):
+    st.write(f"Resetting password for: **{username}**")
+    new_pwd = st.text_input("New Password", type="password")
+    confirm_pwd = st.text_input("Confirm New Password", type="password")
+    if st.button("Set New Password"):
+        if new_pwd != confirm_pwd:
+            st.error("Passwords do not match.")
+        else:
+            if reset_user_password(username, new_pwd):
+                st.success(f"Password for {username} updated!")
+                st.rerun()
+
+@st.dialog("🗑️ Delete User")
+def delete_user_dialog(username):
+    st.warning(f"Are you sure you want to PERMANENTLY delete user **{username}**?")
+    if st.button("Confirm Delete User", type="primary"):
+        if delete_user(username):
+            st.success(f"User {username} deleted.")
+            st.rerun()
+
+# --- UI Components ---
+def display_user_management():
+    st.header("👤 User Management Console")
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        df_users = pd.read_sql_query(f"SELECT username, role, token_expiry FROM {USER_TABLE}", conn)
+        conn.close()
+
+        st.write(f"Total Users: {len(df_users)}")
+        
+        # Display as a table-like structure for better control
+        h_col1, h_col2, h_col3 = st.columns([2, 1, 2])
+        with h_col1: st.markdown("**Username**")
+        with h_col2: st.markdown("**Role**")
+        with h_col3: st.markdown("**Actions**")
+        st.divider()
+
+        for _, row in df_users.iterrows():
+            r_col1, r_col2, r_col3 = st.columns([2, 1, 2])
+            with r_col1: st.write(row['username'])
+            with r_col2: 
+                new_role = st.selectbox("Role", ["user", "admin"], index=0 if row['role'] == "user" else 1, key=f"role_{row['username']}")
+                if new_role != row['role']:
+                    if update_user_role(row['username'], new_role):
+                        st.success(f"Updated {row['username']} to {new_role}!")
+                        st.rerun()
+
+            with r_col3:
+                btn_col1, btn_col2 = st.columns(2)
+                with btn_col1:
+                    if st.button("🔑 Reset", key=f"reset_{row['username']}"):
+                        reset_password_dialog(row['username'])
+                with btn_col2:
+                    # Prevent admin from deleting themselves
+                    if row['username'] != st.session_state["username"]:
+                        if st.button("🗑️ Del", key=f"del_user_{row['username']}"):
+                            delete_user_dialog(row['username'])
+                    else:
+                        st.caption("(Self - Protected)")
+            st.divider()
+
+    except Exception as e:
+        st.error(f"User management error: {e}")
+
 # --- Authentication Logic ---
 def verify_login(username, password):
     conn = sqlite3.connect(DB_FILE)
@@ -622,9 +726,9 @@ def main():
     tab_list = ["📝 Submission Form", "🔍 View Submissions", "📊 Dashboard", "🕵️ Audit Logs"]
     if st.session_state["role"] == "admin":
         tab_list.append("🔄 Sync Manager")
+        tab_list.append("👤 User Management")
 
     tabs = st.tabs(tab_list)
-
     with tabs[0]:
         st.title("Data Submission Form")
         with st.form("data_form", clear_on_submit=True):
@@ -718,6 +822,8 @@ def main():
     if st.session_state["role"] == "admin":
         with tabs[4]:
             display_sync_manager()
+        with tabs[5]:
+            display_user_management()
 
 if __name__ == "__main__":
     main()
