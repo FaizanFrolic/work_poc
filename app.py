@@ -108,23 +108,37 @@ def display_sync_manager():
         if not df_cloud.empty: df_cloud['id'] = pd.to_numeric(df_cloud['id'], errors='coerce').fillna(0).astype(int)
         # --------------------------
 
+        # --- DEEP COMPARISON ---
         local_ids = set(df_local['id']) if not df_local.empty else set()
         cloud_ids = set(df_cloud['id']) if not df_cloud.empty else set()
 
         missing_in_cloud = df_local[~df_local['id'].isin(cloud_ids)] if not df_local.empty else pd.DataFrame()
         missing_in_local = df_cloud[~df_cloud['id'].isin(local_ids)] if not df_cloud.empty else pd.DataFrame()
 
-        is_synced = len(missing_in_cloud) == 0 and len(missing_in_local) == 0
+        # Check for data mismatches where IDs match
+        content_mismatch = pd.DataFrame()
+        if not df_local.empty and not df_cloud.empty:
+            merged = pd.merge(df_local, df_cloud, on='id', suffixes=('_local', '_cloud'), how='inner')
+            # Compare a few key columns (client, brm, lob)
+            for col in ['client', 'brm', 'lob']:
+                if col in merged.columns or f"{col}_local" in merged.columns:
+                    mask = merged[f"{col}_local"].astype(str) != merged[f"{col}_cloud"].astype(str)
+                    if mask.any():
+                        content_mismatch = merged[mask]
+                        break
+
+        row_counts_match = len(df_local) == len(df_cloud)
+        is_synced = len(missing_in_cloud) == 0 and len(missing_in_local) == 0 and len(content_mismatch) == 0 and row_counts_match
         
         # 3. Status Header
         status_col, metric_col1, metric_col2 = st.columns([1, 2, 2])
         with status_col:
             if is_synced:
                 st.markdown("### Status\n# 🟢")
-                st.caption("In Sync")
+                st.caption("Perfectly Synced")
             else:
                 st.markdown("### Status\n# 🔴")
-                st.caption("Out of Sync")
+                st.caption("Mismatch Detected")
         
         with metric_col1:
             st.metric("Local Records", len(df_local))
@@ -135,6 +149,9 @@ def display_sync_manager():
 
         # 4. Detailed Diff Sections
         if not is_synced:
+            if not row_counts_match:
+                st.error(f"❌ Row count mismatch! Local: {len(df_local)} | Cloud: {len(df_cloud)}")
+            
             if not missing_in_cloud.empty:
                 st.warning(f"⚠️ {len(missing_in_cloud)} records exist locally but are missing from Cloud.")
                 st.dataframe(missing_in_cloud[['id', 'client', 'timestamp']], use_container_width=True)
@@ -142,6 +159,10 @@ def display_sync_manager():
             if not missing_in_local.empty:
                 st.error(f"⚠️ {len(missing_in_local)} records exist in Cloud but are missing locally.")
                 st.dataframe(missing_in_local[['id', 'client', 'timestamp']], use_container_width=True)
+                
+            if not content_mismatch.empty:
+                st.info(f"⚠️ {len(content_mismatch)} records have different data but same ID.")
+                st.dataframe(content_mismatch, use_container_width=True)
         else:
             st.success("Everything is perfectly matched!")
 
