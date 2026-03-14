@@ -223,17 +223,29 @@ def display_sync_manager():
         df_cloud = gs_conn.read(worksheet="Submissions", ttl=0)
         
         # --- ROBUSTNESS CLEANUP ---
-        # A. Drop completely empty rows/columns from Cloud
-        df_cloud = df_cloud.dropna(how='all').dropna(axis=1, how='all')
+        # A. Drop completely empty rows/columns
+        df_cloud = df_cloud.dropna(how='all')
         
-        # B. Standardize Column Names (Force lowercase)
+        # B. Standardize Column Names
         df_local.columns = [c.lower() for c in df_local.columns]
         if not df_cloud.empty:
             df_cloud.columns = [c.lower() for c in df_cloud.columns]
-        
-        # C. Force ID Type Consistency
-        if not df_local.empty: df_local['id'] = pd.to_numeric(df_local['id'], errors='coerce').fillna(0).astype(int)
-        if not df_cloud.empty: df_cloud['id'] = pd.to_numeric(df_cloud['id'], errors='coerce').fillna(0).astype(int)
+            
+            # C. DROP "GHOST" ROWS: If ID, Client, and Timestamp are all missing, it's not a record
+            # We filter for rows that actually have data in core columns
+            if 'id' in df_cloud.columns:
+                df_cloud = df_cloud[df_cloud['id'].notna()]
+            elif 'client' in df_cloud.columns:
+                df_cloud = df_cloud[df_cloud['client'].notna()]
+
+        # D. Force ID Type Consistency
+        if not df_local.empty: 
+            df_local['id'] = pd.to_numeric(df_local['id'], errors='coerce').fillna(0).astype(int)
+            df_local = df_local[df_local['id'] > 0] # Filter out invalid local IDs
+            
+        if not df_cloud.empty: 
+            df_cloud['id'] = pd.to_numeric(df_cloud['id'], errors='coerce').fillna(0).astype(int)
+            df_cloud = df_cloud[df_cloud['id'] > 0] # Filter out invalid cloud IDs
         # --------------------------
 
         # --- DEEP COMPARISON ---
@@ -920,6 +932,9 @@ def main():
             conn.close()
             
             if not df_all.empty:
+                # Ensure ID is numeric and handle potential NaNs from data processing
+                df_all['id'] = pd.to_numeric(df_all['id'], errors='coerce').fillna(0).astype(int)
+
                 f_col1, f_col2 = st.columns(2)
                 with f_col1: filter_client = st.text_input("Search Client", key="search_client")
                 with f_col2: filter_brm = st.text_input("Search BRM", key="search_brm")
@@ -939,19 +954,21 @@ def main():
                 with h_col4: st.markdown("**Actions**")
                 st.divider()
 
-                for _, row in df_filtered.iterrows():
+                for idx, row in df_filtered.iterrows():
                     r_col1, r_col2, r_col3, r_col4 = st.columns([2.5, 2.5, 1.5, 1.5])
                     with r_col1: st.write(row['client'])
                     with r_col2: st.write(row['brm'])
                     with r_col3: st.write(row['lob'])
                     with r_col4:
                         btn_col1, btn_col2, btn_col3 = st.columns(3)
+                        # Use a composite key for absolute uniqueness
+                        unique_id = f"{idx}_{row['id']}"
                         with btn_col1:
-                            if st.button("👁️", key=f"view_{row['id']}"): view_details_dialog(row)
+                            if st.button("👁️", key=f"view_{unique_id}"): view_details_dialog(row)
                         with btn_col2:
-                            if st.button("✏️", key=f"edit_{row['id']}"): edit_submission_dialog(row)
+                            if st.button("✏️", key=f"edit_{unique_id}"): edit_submission_dialog(row)
                         with btn_col3:
-                            if st.button("🗑️", key=f"del_{row['id']}"): delete_submission_dialog(row['id'])
+                            if st.button("🗑️", key=f"del_{unique_id}"): delete_submission_dialog(row['id'])
                     st.divider()
             else:
                 st.info("No data found.")
