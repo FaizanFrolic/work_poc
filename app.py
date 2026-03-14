@@ -6,6 +6,10 @@ import os
 import uuid
 import json
 import plotly.express as px
+import google.generativeai as genai
+import requests
+from openai import OpenAI
+from groq import Groq
 from datetime import datetime, timedelta
 from io import BytesIO
 from streamlit_gsheets import GSheetsConnection
@@ -15,6 +19,122 @@ DB_FILE = 'submissions.db'
 TABLE_NAME = 'data_submissions'
 USER_TABLE = 'users'
 AUDIT_LOG_TABLE = 'audit_logs'
+AI_CACHE_TABLE = 'ai_insights_cache'
+
+# --- AI Insights Logic ---
+def get_cached_insight():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"SELECT timestamp, insights FROM {AI_CACHE_TABLE} ORDER BY id DESC LIMIT 1")
+        result = c.fetchone()
+        conn.close()
+        return result if result else (None, None)
+    except:
+        return None, None
+
+def save_insight_to_cache(insights):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"INSERT INTO {AI_CACHE_TABLE} (timestamp, insights) VALUES (?, ?)", 
+                  (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), insights))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Cache save error: {e}")
+
+def generate_ai_insights(df, provider, model_name, api_key=None, base_url=None):
+    if df.empty:
+        return "No data available for analysis."
+    
+    # Limit to recent 50 records
+    df_context = df.tail(50).copy()
+    cols_to_analyze = ['timestamp', 'client', 'brm', 'lob', 'data_a', 'data_b', 'data_c', 'data_d']
+    csv_data = df_context[cols_to_analyze].to_csv(index=False)
+    
+    prompt = f"""
+    Analyze the following data submissions (CSV format):
+    
+    {csv_data}
+    
+    Please provide a concise executive summary including:
+    1. **Key Trends:** Patterns in Clients, BRMs, or LOBs (Lines of Business).
+    2. **Anomalies:** Any unusual values, missing data patterns, or outliers in Data fields.
+    3. **Operational Insights:** Suggestions on what to focus on based on the recent activity.
+    
+    Format the output with clear Markdown headings and bullet points.
+    """
+
+    try:
+        if provider == "Gemini":
+            if not api_key: return "⚠️ Gemini API Key missing."
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
+
+        elif provider == "OpenAI" or provider == "Custom OpenAI API":
+            if not api_key: return "⚠️ API Key missing."
+            client = OpenAI(api_key=api_key, base_url=base_url if provider == "Custom OpenAI API" else None)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+
+        elif provider == "GitHub Models":
+            if not api_key: return "⚠️ GitHub Token missing."
+            client = OpenAI(
+                base_url="https://models.inference.ai.azure.com",
+                api_key=api_key,
+            )
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+
+        elif provider == "Groq":
+            if not api_key: return "⚠️ Groq API Key missing."
+            client = Groq(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+
+        elif provider == "Hugging Face":
+            if not api_key: return "⚠️ HF Token missing."
+            headers = {"Authorization": f"Bearer {api_key}"}
+            url = f"https://api-inference.huggingface.co/models/{model_name}"
+            payload = {"inputs": prompt}
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                res_json = response.json()
+                if isinstance(res_json, list): return res_json[0].get("generated_text", str(res_json))
+                return res_json.get("generated_text", str(res_json))
+            else:
+                return f"⚠️ HF Error: {response.status_code} - {response.text}"
+
+        elif provider == "Ollama (Local)":
+            url = f"{base_url if base_url else 'http://localhost:11434'}/api/generate"
+            payload = {
+                "model": model_name,
+                "prompt": prompt,
+                "stream": False
+            }
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json().get("response", "No response content.")
+            else:
+                return f"⚠️ Ollama Error: {response.status_code} - {response.text}"
+
+        return "⚠️ Unsupported Provider."
+    except Exception as e:
+        if "429" in str(e):
+            return "⚠️ **Quota Exceeded:** You've reached the rate limit. Please wait a moment."
+        return f"Error: {e}"
 
 # --- Database Management ---
 def init_db():
@@ -50,6 +170,14 @@ def init_db():
             changed_by TEXT,
             old_values TEXT,
             new_values TEXT
+        )
+    ''')
+    # AI Cache table
+    c.execute(f'''
+        CREATE TABLE IF NOT EXISTS {AI_CACHE_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            insights TEXT
         )
     ''')
 
@@ -712,6 +840,26 @@ def main():
             st.rerun()
             
         st.divider()
+        
+        # API Key Configuration for AI
+        st.markdown("### 🔑 API Configurations")
+        if not os.getenv("GOOGLE_API_KEY"):
+            st.session_state.google_api_key = st.text_input("Gemini API Key", type="password", value=st.session_state.get("google_api_key", ""), help="Enter your Gemini API Key.")
+        
+        st.session_state.openai_api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state.get("openai_api_key", ""), help="Enter your OpenAI API Key.")
+        
+        st.session_state.github_token = st.text_input("GitHub Token", type="password", value=st.session_state.get("github_token", ""), help="GitHub Models API Token.")
+        
+        st.session_state.groq_api_key = st.text_input("Groq API Key", type="password", value=st.session_state.get("groq_api_key", ""), help="Enter your Groq API Key.")
+        
+        st.session_state.hf_token = st.text_input("Hugging Face Token", type="password", value=st.session_state.get("hf_token", ""), help="Enter your HF Inference API Token.")
+
+        st.session_state.custom_openai_url = st.text_input("Custom OpenAI URL", value=st.session_state.get("custom_openai_url", "http://localhost:8080/v1"), help="URL for LM Studio, LocalAI, vLLM, etc.")
+
+        st.session_state.ollama_url = st.text_input("Ollama Base URL", value=st.session_state.get("ollama_url", "http://localhost:11434"), help="Local Ollama server URL.")
+
+        st.divider()
+
         if st.session_state["role"] == "admin":
             if st.button("➕ Add New User"): add_user_dialog()
             if st.button("☁️ Manual Cloud Sync"):
@@ -723,7 +871,7 @@ def main():
             st.download_button(label="📥 Download Excel Report", data=excel_data, file_name="export.xlsx")
 
     # --- Main Content with Tabs ---
-    tab_list = ["📝 Submission Form", "🔍 View Submissions", "📊 Dashboard", "🕵️ Audit Logs"]
+    tab_list = ["📝 Submission Form", "🔍 View Submissions", "📊 Dashboard", "🤖 AI Insights", "🕵️ Audit Logs"]
     if st.session_state["role"] == "admin":
         tab_list.append("🔄 Sync Manager")
         tab_list.append("👤 User Management")
@@ -814,15 +962,87 @@ def main():
         display_dashboard()
 
     with tabs[3]:
+        st.header("🤖 Multi-LLM Smart Insights")
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            df_ai = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME}", conn)
+            conn.close()
+
+            # Cache Display
+            cache_ts, cache_text = get_cached_insight()
+            if cache_text:
+                with st.expander(f"📌 View Last Analysis ({cache_ts})", expanded=True):
+                    st.markdown(cache_text)
+
+            st.divider()
+            
+            # Model Selection
+            col1, col2 = st.columns(2)
+            with col1:
+                provider = st.selectbox("Provider", ["Gemini", "OpenAI", "GitHub Models", "Groq", "Hugging Face", "Custom OpenAI API", "Ollama (Local)"])
+            with col2:
+                if provider == "Gemini":
+                    model_name = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash"])
+                elif provider == "OpenAI":
+                    model_name = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"])
+                elif provider == "GitHub Models":
+                    model_name = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "Llama-3.3-70B-Instruct", "Phi-4"])
+                elif provider == "Groq":
+                    model_name = st.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"])
+                elif provider == "Hugging Face":
+                    model_name = st.text_input("Model ID (e.g., meta-llama/Llama-3.2-3B-Instruct)", value="mistralai/Mistral-7B-Instruct-v0.3")
+                elif provider == "Custom OpenAI API":
+                    model_name = st.text_input("Model Name", value="local-model")
+                else:
+                    model_name = st.text_input("Model Name (e.g., llama3, qwen2)", value="llama3")
+
+            if st.button("✨ Generate New Analysis", type="primary"):
+                api_key = None
+                curr_base_url = None
+                
+                if provider == "Gemini":
+                    api_key = os.getenv("GOOGLE_API_KEY") or st.session_state.get("google_api_key")
+                elif provider == "OpenAI":
+                    api_key = st.session_state.get("openai_api_key")
+                elif provider == "GitHub Models":
+                    api_key = st.session_state.get("github_token")
+                elif provider == "Groq":
+                    api_key = st.session_state.get("groq_api_key")
+                elif provider == "Hugging Face":
+                    api_key = st.session_state.get("hf_token")
+                elif provider == "Custom OpenAI API":
+                    api_key = st.session_state.get("openai_api_key") # Re-use OpenAI or specific
+                    curr_base_url = st.session_state.get("custom_openai_url")
+                
+                with st.spinner(f"Requesting {provider} ({model_name})..."):
+                    insights = generate_ai_insights(
+                        df_ai, 
+                        provider, 
+                        model_name, 
+                        api_key=api_key, 
+                        base_url=curr_base_url if provider == "Custom OpenAI API" else st.session_state.get("ollama_url")
+                    )
+                    
+                    if "⚠️" in insights or "Error" in insights:
+                        st.error(insights)
+                    else:
+                        save_insight_to_cache(insights)
+                        st.success("New insights generated!")
+                        st.rerun()
+
+        except Exception as e:
+            st.error(f"AI Module Error: {e}")
+
+    with tabs[4]:
         if st.session_state["role"] == "admin":
             display_audit_logs()
         else:
             st.warning("Only administrators can view audit logs.")
 
     if st.session_state["role"] == "admin":
-        with tabs[4]:
-            display_sync_manager()
         with tabs[5]:
+            display_sync_manager()
+        with tabs[6]:
             display_user_management()
 
 if __name__ == "__main__":

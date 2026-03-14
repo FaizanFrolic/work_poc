@@ -1,9 +1,13 @@
 streamlit
 pandas
 openpyxl
-# sqlite3
 bcrypt
 st-gsheets-connection
 google-auth
 plotly
+google-generativeai
+openai
+requests
+groq
+
 
