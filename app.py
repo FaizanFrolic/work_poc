@@ -899,7 +899,7 @@ def apply_custom_css():
 
 # --- Main App Interface ---
 def main():
-    st.set_page_config(page_title="Secure Data Portal", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="BRM Data Portal", layout="wide", initial_sidebar_state="expanded")
     apply_custom_css()
     init_db()
     
@@ -911,10 +911,16 @@ def main():
         login_screen()
         return
 
-    # --- Sidebar ---
+    # --- Sidebar Branding ---
     with st.sidebar:
-        st.title("🛡️ DataPortal")
-        st.subheader(f"Welcome, {st.session_state['username']}!")
+        logo_path = os.path.join(os.path.dirname(__file__), "TCS_wordmark_2020.svg")
+        if os.path.exists(logo_path):
+            st.image(logo_path, width=50)
+            st.markdown("## BRM Data Portal")
+        else:
+            st.markdown("## BRM Data Portal")
+        st.divider()
+        st.subheader(f"👋 Welcome, {st.session_state['username']}!")
         st.caption(f"Role: {st.session_state['role'].capitalize()}")
         
         if st.button("🚪 Logout", use_container_width=True):
