@@ -823,9 +823,84 @@ def display_audit_logs():
     except Exception as e:
         st.error(f"Audit Log error: {e}")
 
+# --- UI Styling ---
+def apply_custom_css():
+    st.markdown("""
+        <style>
+        /* Rounded Corners for Everything */
+        .stButton>button, .stTextInput>div>div>input, .stSelectbox>div>div>div {
+            border-radius: 8px !important;
+        }
+        
+        /* Custom Card Style (Adaptive) */
+        div[data-testid="metric-container"], .stMetric {
+            background-color: var(--secondary-background-color);
+            padding: 1.2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--border-color);
+        }
+        
+        /* Sidebar Styling (Adaptive) */
+        section[data-testid="stSidebar"] {
+            border-right: 1px solid var(--border-color);
+        }
+        
+        /* Tab Styling (Adaptive) */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+            padding: 10px;
+            border-radius: 12px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            height: 45px;
+            white-space: pre-wrap;
+            background-color: var(--secondary-background-color);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 0 20px;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background-color: #007bff !important;
+            color: white !important;
+            border: none !important;
+        }
+        
+        /* Form Container Styling */
+        div[data-testid="stForm"] {
+            border-radius: 12px;
+            background-color: var(--background-color);
+            border: 1px solid var(--border-color);
+            padding: 20px;
+        /* Mobile Responsive Adjustments */
+        @media (max-width: 768px) {
+            .stTabs [data-baseweb="tab-list"] {
+                display: flex;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding: 5px;
+            }
+            .stTabs [data-baseweb="tab"] {
+                padding: 0 10px;
+                font-size: 12px;
+                height: 40px;
+            }
+            div[data-testid="metric-container"] {
+                padding: 0.8rem;
+            }
+            .stMetric div[data-testid="stMetricValue"] {
+                font-size: 1.5rem !important;
+            }
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
 # --- Main App Interface ---
 def main():
-    st.set_page_config(page_title="Secure Data Portal", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(page_title="Secure Data Portal", layout="wide", initial_sidebar_state="expanded")
+    apply_custom_css()
     init_db()
     
     if "authenticated" not in st.session_state:
@@ -838,10 +913,11 @@ def main():
 
     # --- Sidebar ---
     with st.sidebar:
-        st.header(f"👤 {st.session_state['username']}")
-        st.caption(f"Role: {st.session_state['role']}")
+        st.title("🛡️ DataPortal")
+        st.subheader(f"Welcome, {st.session_state['username']}!")
+        st.caption(f"Role: {st.session_state['role'].capitalize()}")
         
-        if st.button("🚪 Logout"):
+        if st.button("🚪 Logout", use_container_width=True):
             st.session_state["authenticated"] = False
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -853,34 +929,33 @@ def main():
             
         st.divider()
         
-        # API Key Configuration for AI
-        st.markdown("### 🔑 API Configurations")
-        if not os.getenv("GOOGLE_API_KEY"):
-            st.session_state.google_api_key = st.text_input("Gemini API Key", type="password", value=st.session_state.get("google_api_key", ""), help="Enter your Gemini API Key.")
-        
-        st.session_state.openai_api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state.get("openai_api_key", ""), help="Enter your OpenAI API Key.")
-        
-        st.session_state.github_token = st.text_input("GitHub Token", type="password", value=st.session_state.get("github_token", ""), help="GitHub Models API Token.")
-        
-        st.session_state.groq_api_key = st.text_input("Groq API Key", type="password", value=st.session_state.get("groq_api_key", ""), help="Enter your Groq API Key.")
-        
-        st.session_state.hf_token = st.text_input("Hugging Face Token", type="password", value=st.session_state.get("hf_token", ""), help="Enter your HF Inference API Token.")
-
-        st.session_state.custom_openai_url = st.text_input("Custom OpenAI URL", value=st.session_state.get("custom_openai_url", "http://localhost:8080/v1"), help="URL for LM Studio, LocalAI, vLLM, etc.")
-
-        st.session_state.ollama_url = st.text_input("Ollama Base URL", value=st.session_state.get("ollama_url", "http://localhost:11434"), help="Local Ollama server URL.")
+        # API Key Configuration for AI (Tucked away)
+        with st.expander("⚙️ AI Provider Settings"):
+            st.markdown("### 🔑 API Keys")
+            if not os.getenv("GOOGLE_API_KEY"):
+                st.session_state.google_api_key = st.text_input("Gemini API Key", type="password", value=st.session_state.get("google_api_key", ""))
+            
+            st.session_state.openai_api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state.get("openai_api_key", ""))
+            st.session_state.github_token = st.text_input("GitHub Token", type="password", value=st.session_state.get("github_token", ""))
+            st.session_state.groq_api_key = st.text_input("Groq API Key", type="password", value=st.session_state.get("groq_api_key", ""))
+            st.session_state.hf_token = st.text_input("Hugging Face Token", type="password", value=st.session_state.get("hf_token", ""))
+            st.divider()
+            st.session_state.custom_openai_url = st.text_input("Custom OpenAI URL", value=st.session_state.get("custom_openai_url", "http://localhost:8080/v1"))
+            st.session_state.ollama_url = st.text_input("Ollama Base URL", value=st.session_state.get("ollama_url", "http://localhost:11434"))
 
         st.divider()
 
         if st.session_state["role"] == "admin":
-            if st.button("➕ Add New User"): add_user_dialog()
-            if st.button("☁️ Manual Cloud Sync"):
-                if sync_to_gsheet(): st.success("Cloud Backup Successful!")
+            st.markdown("### 👑 Admin Actions")
+            if st.button("➕ Add New User", use_container_width=True): add_user_dialog()
+            if st.button("☁️ Manual Cloud Sync", use_container_width=True):
+                if sync_to_gsheet(): st.toast("Cloud Backup Successful!")
                 else: st.error("Cloud Backup Failed.")
         
+        st.divider()
         excel_data = get_data_as_excel(st.session_state["username"], st.session_state["role"])
         if excel_data:
-            st.download_button(label="📥 Download Excel Report", data=excel_data, file_name="export.xlsx")
+            st.download_button(label="📥 Download Excel Report", data=excel_data, file_name="export.xlsx", use_container_width=True)
 
     # --- Main Content with Tabs ---
     tab_list = ["📝 Submission Form", "🔍 View Submissions", "📊 Dashboard", "🤖 AI Insights", "🕵️ Audit Logs"]
